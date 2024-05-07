@@ -190,6 +190,7 @@ async function downloadFiles(fileList) {
                 responseType: "stream",
                 headers: {
                     Authorization: `Bearer ${AUTH_TOKEN}`,
+                    "Content-Type": "application/vnd.bitballoon.v1.raw",
                 },
             });
 
@@ -210,22 +211,6 @@ async function downloadFiles(fileList) {
                     mbCurrent: formatBytes(totalBytesDownloaded),
                     mbTotal: formatBytes(totalSize),
                 });
-            });
-
-            // Update total bytes downloaded
-            response.data.on("end", () => {
-                totalBytesDownloaded += file.size;
-
-                // if it's the last one, set progress to total
-                if (currentFileIndex === fileList.length) {
-                    progressBar.curr = totalSize;
-                    progressBar.tick({
-                        fileCurrent: currentFileIndex,
-                        filesTotal: fileList.length,
-                        mbCurrent: formatBytes(totalSize),
-                        mbTotal: formatBytes(totalSize),
-                    });
-                }
             });
 
             // Wait for file to be written
@@ -251,21 +236,18 @@ async function zipFiles() {
             zlib: { level: 9 }, // Sets the compression level.
         });
 
-        output.on("close", function () {
-            console.log(`Zip file ${zipFileName} created successfully.`);
-        });
-
         archive.on("error", function (err) {
             console.error("Error zipping files:", err);
             reject(err);
         });
 
         archive.pipe(output);
-        archive.directory(".", false);
+        archive.directory(path.join(__dirname, `downloads/${SITE_ID}`), false);
         archive.finalize();
 
         // wait for zip file to be created
         output.on("finish", () => {
+            console.log("Zip file created:", zipFileName);
             // Delete site folder
             fs.rmSync(path.join(__dirname, `downloads/${SITE_ID}`), {
                 recursive: true,
