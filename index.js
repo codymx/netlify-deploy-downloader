@@ -8,14 +8,15 @@ const { Toggle, Form } = require("enquirer");
 const { MultiBar, Presets } = require("cli-progress");
 const {
     calculateTotalSize,
-    formatBytes,
+    formatBytesToKb,
+    formatBytesToMb,
     openBrowser,
     getFileName,
 } = require("./utils");
 
 // Constants
-const MAX_CONCURRENT_DOWNLOADS = 3;
-const REQUEST_DELAY = 250; // 1 second
+const MAX_CONCURRENT_DOWNLOADS = 5;
+const REQUEST_DELAY = 300; // in milliseconds
 
 // Netlify API endpoint
 const NETLIFY_API_ENDPOINT = "https://api.netlify.com/api/v1/sites/";
@@ -122,26 +123,39 @@ async function downloadFiles(fileList) {
         fs.mkdirSync(path.join(__dirname, "downloads"));
     }
 
-    let totalDownloaded = 0;
+    let totalDownloadedBytes = 0;
+    let totalDownloadedFiles = 0;
 
     const progressBar = new MultiBar(
         {
             hideCursor: true,
-            format: " {bar} | {filename} | {percentage}% | {mbCurrent}/{mbTotal} MB",
+            format: " {bar} | {filename} | {percentage}% | {kbCurrent}/{kbTotal} KB",
         },
         Presets.shades_grey
     );
 
     // Add bar for total
-    const totalBar = progressBar.create(calculateTotalSize(fileList), 0, {
-        filename: "Total Progress",
-        mbCurrent: 0,
-        mbTotal: formatBytes(calculateTotalSize(fileList)),
-        format: " {bar} | {filename} | {percentage}% | {mbCurrent}/{mbTotal} MB",
-    });
+    const totalBar = progressBar.create(
+        calculateTotalSize(fileList),
+        0,
+        {
+            filename: "Total Progress",
+            mbCurrent: 0,
+            mbTotal: formatBytesToMb(calculateTotalSize(fileList)),
+            currentFiles: 0,
+            totalFiles: fileList.length,
+        },
+        {
+            format: " {bar} | Total Progress | {percentage}% | {mbCurrent}/{mbTotal} MB | {currentFiles}/{totalFiles} files",
+        }
+    );
 
     // Download a single file
     async function downloadFile(path, dest, bar) {
+        totalDownloadedFiles++;
+
+        let fileTotalDownloadedBytes = 0;
+
         const response = await axios({
             method: "GET",
             url: `${NETLIFY_API_ENDPOINT}${SITE_ID}/files/${path}`,
@@ -153,12 +167,14 @@ async function downloadFiles(fileList) {
         });
 
         response.data.on("data", (chunk) => {
-            const mb = formatBytes(chunk.length);
-            bar.increment(chunk.length, { mbCurrent: mb });
+            totalDownloadedBytes += chunk.length;
+            fileTotalDownloadedBytes += chunk.length;
 
-            totalDownloaded += chunk.length;
-            totalBar.update(totalDownloaded, {
-                mbCurrent: formatBytes(totalDownloaded),
+            const kb = formatBytesToKb(fileTotalDownloadedBytes);
+            bar.increment(chunk.length, { kbCurrent: kb });
+            totalBar.update(totalDownloadedBytes, {
+                mbCurrent: formatBytesToMb(totalDownloadedBytes),
+                currentFiles: totalDownloadedFiles,
             });
         });
 
@@ -198,8 +214,8 @@ async function downloadFiles(fileList) {
 
             const bar = progressBar.create(totalSize, 0, {
                 filename: fileName,
-                mbCurrent: 0,
-                mbTotal: formatBytes(totalSize),
+                kbCurrent: 0,
+                kbTotal: formatBytesToKb(totalSize),
             });
 
             downloadPromises.push(

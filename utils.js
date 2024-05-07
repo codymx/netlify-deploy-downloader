@@ -12,8 +12,13 @@ function calculateTotalSize(fileList) {
 }
 
 // Function to format bytes into megabytes
-function formatBytes(bytes) {
+function formatBytesToMb(bytes) {
     return (bytes / 1024 / 1024).toFixed(2);
+}
+
+// Function to format bytes into kilobytes
+function formatBytesToKb(bytes) {
+    return (bytes / 1024).toFixed(2);
 }
 
 // Function to open URL in default browser
@@ -46,7 +51,8 @@ function getFileName(filePath) {
 
 module.exports = {
     calculateTotalSize,
-    formatBytes,
+    formatBytesToMb,
+    formatBytesToKb,
     openBrowser,
     getFileName,
 };
