@@ -1,0 +1,28 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Netlify OAuth Callback</title>
+    <script>  
+        const accessToken = window.location.hash.split('=')[1].split('&')[0];
+        window.location.href = `http://localhost:3000/callback?access_token=${accessToken}`;
+    </script>
+    <style>
+        body {
+            font-family: monospace;
+            text-align: center;
+            margin-top: 20%;
+        }
+
+        h1 {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Netlify OAuth Callback</h1>
+    <p>Sending access token to server...</p>
+</body>
+</html>
