@@ -1,12 +1,21 @@
-const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const archiver = require("archiver");
-const http = require("http");
-const { spawn } = require("child_process");
+const axios = require("axios");
+const { createServer } = require("http");
 const { parse } = require("url");
-const ProgressBar = require("progress");
 const { Toggle, Form } = require("enquirer");
+const { MultiBar, Presets } = require("cli-progress");
+const {
+    calculateTotalSize,
+    formatBytes,
+    openBrowser,
+    getFileName,
+} = require("./utils");
+
+// Constants
+const MAX_CONCURRENT_DOWNLOADS = 3;
+const REQUEST_DELAY = 250; // 1 second
 
 // Netlify API endpoint
 const NETLIFY_API_ENDPOINT = "https://api.netlify.com/api/v1/sites/";
@@ -30,47 +39,12 @@ if (args.length > 0) {
     }
 }
 
-// Function to calculate total size of all files
-function calculateTotalSize(fileList) {
-    let totalSize = 0;
-
-    for (const file of fileList) {
-        totalSize += file.size;
-    }
-
-    return totalSize;
-}
-
-// Function to format bytes into megabytes
-function formatBytes(bytes) {
-    return (bytes / 1024 / 1024).toFixed(2);
-}
-
-// Function to open URL in default browser
-function openBrowser(url) {
-    return new Promise((resolve, reject) => {
-        const child = spawn("open", [url]);
-
-        child.on("error", (err) => {
-            reject(err);
-        });
-
-        child.on("exit", (code) => {
-            if (code === 0) {
-                resolve();
-            } else {
-                reject(new Error(`Failed to open browser (exit code ${code})`));
-            }
-        });
-    });
-}
-
 // Function to authenticate and get access token
 async function authenticate() {
     return new Promise((resolve, reject) => {
         try {
             // Serve callback HTML file
-            const server = http.createServer((req, res) => {
+            const server = createServer((req, res) => {
                 const { pathname } = parse(req.url, true);
                 if (pathname === "/callback") {
                     const { access_token } = parse(req.url, true).query;
@@ -142,88 +116,130 @@ async function getFileList(accessToken) {
     }
 }
 
-// Function to download files with exact directory structure
+// Function to download files
 async function downloadFiles(fileList) {
-    // Check for existing working directory and delete if found
-    if (fs.existsSync(path.join(__dirname, `downloads/${SITE_ID}`))) {
-        fs.rmSync(path.join(__dirname, `downloads/${SITE_ID}`), {
-            recursive: true,
+    if (!fs.existsSync(path.join(__dirname, "downloads"))) {
+        fs.mkdirSync(path.join(__dirname, "downloads"));
+    }
+
+    let totalDownloaded = 0;
+
+    const progressBar = new MultiBar(
+        {
+            hideCursor: true,
+            format: " {bar} | {filename} | {percentage}% | {mbCurrent}/{mbTotal} MB",
+        },
+        Presets.shades_grey
+    );
+
+    // Add bar for total
+    const totalBar = progressBar.create(calculateTotalSize(fileList), 0, {
+        filename: "Total Progress",
+        mbCurrent: 0,
+        mbTotal: formatBytes(calculateTotalSize(fileList)),
+        format: " {bar} | {filename} | {percentage}% | {mbCurrent}/{mbTotal} MB",
+    });
+
+    // Download a single file
+    async function downloadFile(path, dest, bar) {
+        const response = await axios({
+            method: "GET",
+            url: `${NETLIFY_API_ENDPOINT}${SITE_ID}/files/${path}`,
+            responseType: "stream",
+            headers: {
+                Authorization: `Bearer ${AUTH_TOKEN}`,
+                "Content-Type": "application/vnd.bitballoon.v1.raw",
+            },
+        });
+
+        response.data.on("data", (chunk) => {
+            const mb = formatBytes(chunk.length);
+            bar.increment(chunk.length, { mbCurrent: mb });
+
+            totalDownloaded += chunk.length;
+            totalBar.update(totalDownloaded, {
+                mbCurrent: formatBytes(totalDownloaded),
+            });
+        });
+
+        const writer = fs.createWriteStream(dest);
+        response.data.pipe(writer);
+
+        return new Promise((resolve) => {
+            writer.on("finish", () => {
+                bar.stop();
+                resolve();
+            });
+            writer.on("error", (error) => {
+                console.error("Error writing file:", error);
+            });
         });
     }
 
-    try {
-        let currentFileIndex = 0;
-        let totalBytesDownloaded = 0;
-        const totalSize = calculateTotalSize(fileList);
-        const progressBar = new ProgressBar(
-            "[:bar] :percent :fileCurrent/:filesTotal files [:mbCurrent/:mbTotal MB]",
-            {
-                complete: "█",
-                incomplete: "░",
-                width: 30,
-                curr: 0,
-                total: totalSize,
-                callback: () => {
-                    progressBar.terminate();
-                },
-            }
-        );
+    // Download a chunk of files with a maximum number of concurrent downloads
+    async function downloadChunk(filesChunk) {
+        const downloadPromises = [];
 
-        for (const file of fileList) {
-            currentFileIndex++;
-
+        for (const file of filesChunk) {
             const filePath = file.path;
             const directory = path.join(
                 __dirname,
                 `downloads/${SITE_ID}`,
                 filePath.substring(0, filePath.lastIndexOf("/"))
             );
+            const fullFilePath = path.join(directory, path.basename(filePath));
 
             if (!fs.existsSync(directory)) {
                 fs.mkdirSync(directory, { recursive: true });
             }
 
-            const fullFilePath = path.join(directory, path.basename(filePath));
-            const response = await axios({
-                method: "GET",
-                url: `${NETLIFY_API_ENDPOINT}${SITE_ID}/files/${filePath}`,
-                responseType: "stream",
-                headers: {
-                    Authorization: `Bearer ${AUTH_TOKEN}`,
-                    "Content-Type": "application/vnd.bitballoon.v1.raw",
-                },
+            const totalSize = file.size;
+            const fileName = getFileName(filePath);
+
+            const bar = progressBar.create(totalSize, 0, {
+                filename: fileName,
+                mbCurrent: 0,
+                mbTotal: formatBytes(totalSize),
             });
 
-            // Write file stream to disk
-            const writer = fs.createWriteStream(fullFilePath);
-            response.data.pipe(writer);
-
-            // Update progress bar
-            response.data.on("data", (chunk) => {
-                totalBytesDownloaded += chunk.length;
-
-                // update curr
-                progressBar.curr = totalBytesDownloaded;
-
-                progressBar.tick({
-                    fileCurrent: currentFileIndex,
-                    filesTotal: fileList.length,
-                    mbCurrent: formatBytes(totalBytesDownloaded),
-                    mbTotal: formatBytes(totalSize),
-                });
-            });
-
-            // Wait for file to be written
-            await new Promise((resolve, reject) => {
-                writer.on("finish", () => {
-                    resolve();
-                });
-                writer.on("error", reject);
-            });
+            downloadPromises.push(
+                downloadFile(filePath, fullFilePath, bar).then(() => {
+                    progressBar.remove(bar);
+                })
+            );
         }
-    } catch (error) {
-        console.error("Error downloading files:", error);
+
+        await Promise.all(downloadPromises);
     }
+
+    // Recursively download files from the entire list
+    async function downloadAllFilesRecursive(filesList) {
+        let startIndex = 0;
+
+        while (startIndex < filesList.length) {
+            const filesChunk = filesList.slice(
+                startIndex,
+                startIndex + MAX_CONCURRENT_DOWNLOADS
+            );
+
+            await downloadChunk(filesChunk);
+            startIndex += MAX_CONCURRENT_DOWNLOADS;
+
+            // Add delay
+            if (startIndex < filesList.length) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, REQUEST_DELAY)
+                );
+            }
+        }
+    }
+
+    await downloadAllFilesRecursive(fileList);
+
+    totalBar.stop();
+    progressBar.stop();
+
+    console.log("All files downloaded successfully.");
 }
 
 // Function to zip files
@@ -323,13 +339,11 @@ async function main() {
             console.error("No files found.");
             return;
         } else {
-            console.log(`Found ${fileList.length} files. Starting download...`);
+            console.log(`Found ${fileList.length} files. Downloading...`);
         }
 
         // Download files
         await downloadFiles(fileList, accessToken);
-
-        console.log("Download complete!");
 
         // Zip files
         if (ZIP_FILES) {
