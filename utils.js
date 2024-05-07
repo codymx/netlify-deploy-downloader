@@ -43,7 +43,7 @@ function openBrowser(url) {
 function getFileName(filePath) {
     const fileName = filePath.split("/").pop();
     if (fileName.length <= 20) {
-        return fileName;
+        return fileName.padEnd(23);
     } else {
         return fileName.slice(0, 10) + "..." + fileName.slice(-10);
     }

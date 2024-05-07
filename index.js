@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const archiver = require("archiver");
 const axios = require("axios");
+const chalk = require("chalk");
 const { createServer } = require("http");
 const { parse } = require("url");
 const { Toggle, Form } = require("enquirer");
@@ -129,9 +130,14 @@ async function downloadFiles(fileList) {
     const progressBar = new MultiBar(
         {
             hideCursor: true,
-            format: " {bar} | {filename} | {percentage}% | {kbCurrent}/{kbTotal} KB",
         },
-        Presets.shades_grey
+        {
+            format: chalk.dim(
+                " {bar} | {filename} | {percentage}% | {kbCurrent}/{kbTotal} KB"
+            ),
+            barCompleteChar: "\u2588",
+            barIncompleteChar: "\u2591",
+        }
     );
 
     // Add bar for total
@@ -146,7 +152,9 @@ async function downloadFiles(fileList) {
             totalFiles: fileList.length,
         },
         {
-            format: " {bar} | Total Progress | {percentage}% | {mbCurrent}/{mbTotal} MB | {currentFiles}/{totalFiles} files",
+            format: chalk.greenBright.bold(
+                ` {bar} | Total Progress | {percentage}% | {mbCurrent}/{mbTotal} MB | {currentFiles}/{totalFiles} files`
+            ),
         }
     );
 
